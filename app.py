@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import re
 
 from PIL import Image
 from datetime import datetime
@@ -56,52 +57,68 @@ def load_nlp_resources():
     return model, topic_names, topic_embeddings
 
 
-topic_keywords = {
+def normalize_arabic(text):
+
+    text = text.lower()
+
+    text = re.sub(
+        r"[\u064B-\u065F\u0670\u0640]",
+        "",
+        text
+    )
+
+    text = (
+        text
+        .replace("أ", "ا")
+        .replace("إ", "ا")
+        .replace("آ", "ا")
+        .replace("ى", "ي")
+        .replace("ة", "ه")
+    )
+
+    return text
+
+
+arabic_keywords = {
+
     "Waste management": [
-        "زبالة",
-        "نفايات",
-        "قمامة",
-        "حاويات زبالة",
-        "حاويات نفايات",
-        "جمع النفايات"
+        "زبال",
+        "نفا",
+        "قمام",
+        "حاوي"
     ],
 
     "Roads / potholes": [
         "حفر",
-        "حفرة",
-        "الحفر",
-        "طرقات متضررة",
-        "طريق خربان",
-        "تصليح الطريق",
-        "صيانة الطرقات"
+        "حفره",
+        "طريق",
+        "طرقات",
+        "زفت",
+        "اسفلت"
     ],
 
     "Street lighting": [
-        "ضو الشارع",
-        "إنارة",
-        "انارة",
-        "عواميد الإنارة",
-        "عواميد الانارة",
-        "عتمة",
-        "لمبات الشارع"
+        "انار",
+        "ضو",
+        "عتم",
+        "لمب",
+        "عواميد"
     ],
 
     "Green spaces": [
         "شجر",
-        "حديقة",
-        "حدائق",
-        "مساحات خضرا",
-        "مساحات خضراء",
-        "حدائق عامة"
+        "حديق",
+        "خضر",
+        "منتزه"
     ],
 
     "Water supply": [
-        "انقطاع المي",
-        "المي عم تنقطع",
-        "انقطاع المياه",
-        "نقص المياه",
+        "المي",
+        "مياه",
+        "ماء",
+        "مي عم",
         "توزيع المي",
-        "توزيع المياه"
+        "انقطاع المي"
     ]
 }
 
@@ -113,33 +130,47 @@ def classify_suggestion(
     topic_embeddings
 ):
 
-    text = suggestion.lower()
+    normalized_text = normalize_arabic(
+        suggestion
+    )
 
     keyword_scores = {}
 
-    for topic, keywords in topic_keywords.items():
+    for topic, keywords in arabic_keywords.items():
 
-        matches = sum(
-            keyword in text
-            for keyword in keywords
-        )
+        score = 0
 
-        keyword_scores[topic] = matches
+        for keyword in keywords:
 
-    max_matches = max(keyword_scores.values())
+            normalized_keyword = normalize_arabic(
+                keyword
+            )
 
-    best_keyword_topics = [
-        topic
-        for topic, score in keyword_scores.items()
-        if score == max_matches and score > 0
-    ]
+            if normalized_keyword in normalized_text:
+                score += 1
 
-    if len(best_keyword_topics) == 1:
-        return (
-            best_keyword_topics[0],
-            None,
-            "Lebanese Arabic keyword match"
-        )
+        keyword_scores[topic] = score
+
+    highest_keyword_score = max(
+        keyword_scores.values()
+    )
+
+    if highest_keyword_score > 0:
+
+        best_topics = [
+            topic
+            for topic, score
+            in keyword_scores.items()
+            if score == highest_keyword_score
+        ]
+
+        if len(best_topics) == 1:
+
+            return (
+                best_topics[0],
+                None,
+                "Lebanese Arabic keyword match"
+            )
 
     suggestion_embedding = nlp_model.encode(
         [suggestion],
@@ -153,7 +184,9 @@ def classify_suggestion(
 
     best_index = similarities.argmax()
 
-    detected_topic = topic_names[best_index]
+    detected_topic = topic_names[
+        best_index
+    ]
 
     match_score = float(
         similarities[best_index]
@@ -162,7 +195,7 @@ def classify_suggestion(
     return (
         detected_topic,
         match_score,
-        "Semantic similarity"
+        "Multilingual semantic similarity"
     )
 
 
@@ -177,21 +210,23 @@ def find_representative_feedback(
     if len(suggestions) == 1:
         return suggestions[0]
 
-    suggestion_embeddings = nlp_model.encode(
+    embeddings = nlp_model.encode(
         suggestions,
         normalize_embeddings=True
     )
 
-    topic_index = topic_names.index(topic)
+    topic_index = topic_names.index(
+        topic
+    )
 
-    prototype_embedding = (
+    prototype = (
         topic_embeddings[topic_index]
         .reshape(1, -1)
     )
 
     similarities = cosine_similarity(
-        suggestion_embeddings,
-        prototype_embedding
+        embeddings,
+        prototype
     ).flatten()
 
     best_index = similarities.argmax()
@@ -207,6 +242,29 @@ if "reports" not in st.session_state:
 
 if "next_ticket_id" not in st.session_state:
     st.session_state.next_ticket_id = 1
+
+
+with st.sidebar:
+
+    st.header("Nasij")
+
+    st.write(
+        "AI-powered civic reporting platform."
+    )
+
+    if st.button(
+        "🗑️ Reset Demo Data"
+    ):
+
+        st.session_state.suggestions = []
+        st.session_state.reports = []
+        st.session_state.next_ticket_id = 1
+
+        st.success(
+            "Demo data cleared."
+        )
+
+        st.rerun()
 
 
 st.title("🧶 Nasij")
@@ -230,11 +288,13 @@ tab1, tab2, tab3 = st.tabs([
 
 with tab1:
 
-    st.header("📷 Report an Infrastructure Issue")
+    st.header(
+        "📷 Report an Infrastructure Issue"
+    )
 
     st.write(
-        "Upload a photo of a civic issue and Nasij "
-        "will analyze it automatically."
+        "Upload a photo of a civic issue and "
+        "Nasij will analyze it automatically."
     )
 
     location = st.text_input(
@@ -245,14 +305,18 @@ with tab1:
     issue_note = st.text_area(
         "Additional details (optional)",
         placeholder=(
-            "Example: This pothole has been causing "
-            "problems for cars for several weeks."
+            "Example: This pothole has been "
+            "causing problems for cars."
         )
     )
 
     uploaded_image = st.file_uploader(
         "Upload an image",
-        type=["jpg", "jpeg", "png"]
+        type=[
+            "jpg",
+            "jpeg",
+            "png"
+        ]
     )
 
     if uploaded_image is not None:
@@ -261,7 +325,9 @@ with tab1:
             uploaded_image
         ).convert("RGB")
 
-        st.subheader("Uploaded Image")
+        st.subheader(
+            "Uploaded Image"
+        )
 
         st.image(
             image,
@@ -290,8 +356,8 @@ with tab1:
             if len(result.boxes) == 0:
 
                 st.warning(
-                    "Nasij could not confidently detect "
-                    "a supported infrastructure issue."
+                    "Nasij could not confidently "
+                    "detect a supported infrastructure issue."
                 )
 
             else:
@@ -302,14 +368,14 @@ with tab1:
                     annotated_image[:, :, ::-1]
                 )
 
-                st.subheader("AI Detection")
+                st.subheader(
+                    "AI Detection"
+                )
 
                 st.image(
                     annotated_image,
                     use_container_width=True
                 )
-
-                st.subheader("Detection Results")
 
                 detections = []
 
@@ -334,19 +400,24 @@ with tab1:
                     )
 
                     detections.append({
-                        "issue": readable_name,
-                        "confidence": confidence
+                        "issue":
+                            readable_name,
+
+                        "confidence":
+                            confidence
                     })
 
                     st.success(
-                        f"Detected: **{readable_name}** "
+                        f"Detected: "
+                        f"**{readable_name}** "
                         f"— AI confidence: "
                         f"**{confidence:.1%}**"
                     )
 
                 primary_detection = max(
                     detections,
-                    key=lambda item: item["confidence"]
+                    key=lambda x:
+                        x["confidence"]
                 )
 
                 ticket_id = (
@@ -357,14 +428,19 @@ with tab1:
                 st.session_state.next_ticket_id += 1
 
                 report = {
+
                     "ticket_id":
                         ticket_id,
 
                     "issue":
-                        primary_detection["issue"],
+                        primary_detection[
+                            "issue"
+                        ],
 
                     "confidence":
-                        primary_detection["confidence"],
+                        primary_detection[
+                            "confidence"
+                        ],
 
                     "location":
                         location.strip()
@@ -411,18 +487,21 @@ with tab1:
 
 with tab2:
 
-    st.header("💬 Submit a Suggestion")
+    st.header(
+        "💬 Submit a Suggestion"
+    )
 
     st.write(
-        "Share an idea or concern with your municipality. "
-        "Nasij will automatically determine the civic topic."
+        "Share an idea or concern with your "
+        "municipality. Nasij will automatically "
+        "determine the civic topic."
     )
 
     suggestion = st.text_area(
         "Your suggestion",
         placeholder=(
-            "Example: The potholes near our neighborhood "
-            "need urgent repair."
+            "Example: The potholes near our "
+            "neighborhood need urgent repair."
         ),
         height=150
     )
@@ -462,7 +541,8 @@ with tab2:
                     topic_embeddings
                 )
 
-            st.session_state.suggestions.append({
+            new_suggestion = {
+
                 "suggestion":
                     suggestion.strip(),
 
@@ -479,7 +559,11 @@ with tab2:
                     datetime.now().strftime(
                         "%Y-%m-%d %H:%M"
                     )
-            })
+            }
+
+            st.session_state.suggestions.append(
+                new_suggestion
+            )
 
             st.success(
                 "Suggestion submitted successfully! ✅"
@@ -505,18 +589,20 @@ with tab2:
             else:
 
                 st.write(
-                    "**Detected using Lebanese Arabic "
-                    "civic keywords.**"
+                    "**Detected using Lebanese "
+                    "Arabic civic keywords.**"
                 )
 
 
 with tab3:
 
-    st.header("🏛️ Municipality Dashboard")
+    st.header(
+        "🏛️ Municipality Dashboard"
+    )
 
     st.write(
-        "Monitor infrastructure reports and understand "
-        "citizens' most common concerns."
+        "Monitor infrastructure reports and "
+        "understand citizens' most common concerns."
     )
 
     total_reports = len(
@@ -530,8 +616,12 @@ with tab3:
     if total_suggestions > 0:
 
         suggestion_topics = [
-            item["topic"]
-            for item in st.session_state.suggestions
+            item.get(
+                "topic",
+                "Unknown"
+            )
+            for item
+            in st.session_state.suggestions
         ]
 
         topic_counts = pd.Series(
@@ -548,9 +638,13 @@ with tab3:
             dtype=int
         )
 
-        top_priority = "No data yet"
+        top_priority = (
+            "No data yet"
+        )
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3 = st.columns(
+        3
+    )
 
     with col1:
 
@@ -575,7 +669,9 @@ with tab3:
 
     st.divider()
 
-    st.subheader("💬 Citizen Feedback Analysis")
+    st.subheader(
+        "💬 Citizen Feedback Analysis"
+    )
 
     if total_suggestions == 0:
 
@@ -586,11 +682,15 @@ with tab3:
 
     else:
 
-        st.write("### Most Requested Topics")
+        st.write(
+            "### Most Requested Topics"
+        )
 
         topic_dataframe = (
             topic_counts
-            .rename_axis("Topic")
+            .rename_axis(
+                "Topic"
+            )
             .reset_index(
                 name="Number of Suggestions"
             )
@@ -626,10 +726,15 @@ with tab3:
         for topic, count in topic_counts.items():
 
             topic_suggestions = [
-                item["suggestion"]
+                item.get(
+                    "suggestion",
+                    ""
+                )
                 for item
                 in st.session_state.suggestions
-                if item["topic"] == topic
+                if item.get(
+                    "topic"
+                ) == topic
             ]
 
             representative = (
@@ -655,12 +760,21 @@ with tab3:
                     f"{count}"
                 )
 
-                st.write(
-                    f"{count} citizen "
-                    f"{'submission was' if count == 1 else 'submissions were'} "
-                    f"grouped under "
-                    f"**{topic.lower()}**."
-                )
+                if count == 1:
+
+                    st.write(
+                        f"One citizen submission "
+                        f"was grouped under "
+                        f"**{topic.lower()}**."
+                    )
+
+                else:
+
+                    st.write(
+                        f"{count} citizen submissions "
+                        f"were grouped under "
+                        f"**{topic.lower()}**."
+                    )
 
                 st.write(
                     "**Representative concern:**"
@@ -682,18 +796,38 @@ with tab3:
                 border=True
             ):
 
-                st.write(
-                    f"**Topic:** "
-                    f"{item['topic']}"
+                topic = item.get(
+                    "topic",
+                    "Unknown"
                 )
 
-                st.write(
-                    f"**Suggestion:** "
-                    f"{item['suggestion']}"
+                suggestion_text = item.get(
+                    "suggestion",
+                    ""
                 )
 
                 score = item.get(
                     "match_score"
+                )
+
+                method = item.get(
+                    "method",
+                    "Previous semantic classification"
+                )
+
+                submitted_time = item.get(
+                    "time",
+                    "Earlier submission"
+                )
+
+                st.write(
+                    f"**Topic:** "
+                    f"{topic}"
+                )
+
+                st.write(
+                    f"**Suggestion:** "
+                    f"{suggestion_text}"
                 )
 
                 if score is not None:
@@ -701,17 +835,17 @@ with tab3:
                     st.caption(
                         f"Topic match score: "
                         f"{score:.1%} "
-                        f"• {item['method']} "
+                        f"• {method} "
                         f"• Submitted: "
-                        f"{item['time']}"
+                        f"{submitted_time}"
                     )
 
                 else:
 
                     st.caption(
-                        f"{item['method']} "
+                        f"{method} "
                         f"• Submitted: "
-                        f"{item['time']}"
+                        f"{submitted_time}"
                     )
 
     st.divider()
@@ -737,42 +871,76 @@ with tab3:
                 border=True
             ):
 
-                st.write(
-                    f"### 🎫 "
-                    f"{report['ticket_id']}"
+                ticket_id = report.get(
+                    "ticket_id",
+                    "Unknown ticket"
                 )
 
-                col_a, col_b = (
-                    st.columns(2)
+                issue = report.get(
+                    "issue",
+                    "Unknown"
+                )
+
+                location = report.get(
+                    "location",
+                    "Not specified"
+                )
+
+                note = report.get(
+                    "note",
+                    "No additional details"
+                )
+
+                confidence = report.get(
+                    "confidence",
+                    0
+                )
+
+                submitted_time = report.get(
+                    "time",
+                    "Earlier report"
+                )
+
+                status = report.get(
+                    "status",
+                    "Pending"
+                )
+
+                st.write(
+                    f"### 🎫 {ticket_id}"
+                )
+
+                col_a, col_b = st.columns(
+                    2
                 )
 
                 with col_a:
 
                     st.write(
                         f"**Issue:** "
-                        f"{report['issue']}"
+                        f"{issue}"
                     )
 
                     st.write(
                         f"**Location:** "
-                        f"{report['location']}"
+                        f"{location}"
                     )
 
                     st.write(
                         f"**Citizen note:** "
-                        f"{report['note']}"
+                        f"{note}"
                     )
 
                 with col_b:
 
                     st.write(
                         f"**AI confidence:** "
-                        f"{report['confidence']:.1%}"
+                        f"{confidence:.1%}"
                     )
 
                     st.write(
                         f"**Submitted:** "
-                        f"{report['time']}"
+                        f"{submitted_time}"
                     )
 
                 status_icons = {
@@ -783,13 +951,14 @@ with tab3:
 
                 st.write(
                     f"**Status:** "
-                    f"{status_icons.get(report['status'], '')} "
-                    f"{report['status']}"
+                    f"{status_icons.get(status, '')} "
+                    f"{status}"
                 )
 
     st.divider()
 
     st.caption(
-        "Nasij MVP — reports and suggestions are stored "
-        "temporarily during the current application session."
+        "Nasij MVP — reports and suggestions "
+        "are stored temporarily during the "
+        "current application session."
     )
