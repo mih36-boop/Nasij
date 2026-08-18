@@ -1,78 +1,225 @@
 import streamlit as st
-from ultralytics import YOLO
-from PIL import Image
+import pandas as pd
 import numpy as np
+
+from PIL import Image
+from datetime import datetime
+
+from ultralytics import YOLO
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
-import pandas as pd
 
 
-#page config
 st.set_page_config(
     page_title="Nasij",
     page_icon="🧶",
     layout="wide"
 )
 
-#load comp vision model
 
 @st.cache_resource
 def load_cv_model():
     return YOLO("best_nasij_model.pt")
 
 
-cv_model = load_cv_model()
-#load nlp 
 @st.cache_resource
-def load_nlp_model():
-    return SentenceTransformer(
+def load_nlp_resources():
+
+    model = SentenceTransformer(
         "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
     )
 
-nlp_model = load_nlp_model()
-topic_descriptions = {
-    "Waste management":
-        "garbage collection, trash, waste, garbage bins and dirty streets",
+    topic_descriptions = {
+        "Waste management":
+            "garbage collection, trash, waste, garbage bins and dirty streets",
 
-    "Roads / potholes":
-        "potholes, damaged roads, road repairs and street maintenance",
+        "Roads / potholes":
+            "potholes, damaged roads, road repairs and street maintenance",
 
-    "Street lighting":
-        "broken streetlights, dark streets, street lamps and public lighting",
+        "Street lighting":
+            "broken streetlights, dark streets, street lamps and public lighting",
 
-    "Green spaces":
-        "trees, parks, gardens, greenery and public green spaces",
+        "Green spaces":
+            "trees, parks, gardens, greenery and public green spaces",
 
-    "Water supply":
-        "water shortages, water cuts, water distribution and reliable water supply"
+        "Water supply":
+            "water shortages, water cuts, water distribution and reliable water supply"
+    }
+
+    topic_names = list(topic_descriptions.keys())
+
+    topic_embeddings = model.encode(
+        list(topic_descriptions.values()),
+        normalize_embeddings=True
+    )
+
+    return model, topic_names, topic_embeddings
+
+
+topic_keywords = {
+    "Waste management": [
+        "زبالة",
+        "نفايات",
+        "قمامة",
+        "حاويات زبالة",
+        "حاويات نفايات",
+        "جمع النفايات"
+    ],
+
+    "Roads / potholes": [
+        "حفر",
+        "حفرة",
+        "الحفر",
+        "طرقات متضررة",
+        "طريق خربان",
+        "تصليح الطريق",
+        "صيانة الطرقات"
+    ],
+
+    "Street lighting": [
+        "ضو الشارع",
+        "إنارة",
+        "انارة",
+        "عواميد الإنارة",
+        "عواميد الانارة",
+        "عتمة",
+        "لمبات الشارع"
+    ],
+
+    "Green spaces": [
+        "شجر",
+        "حديقة",
+        "حدائق",
+        "مساحات خضرا",
+        "مساحات خضراء",
+        "حدائق عامة"
+    ],
+
+    "Water supply": [
+        "انقطاع المي",
+        "المي عم تنقطع",
+        "انقطاع المياه",
+        "نقص المياه",
+        "توزيع المي",
+        "توزيع المياه"
+    ]
 }
 
-topic_names = list(topic_descriptions.keys())
 
-topic_embeddings = nlp_model.encode(
-    list(topic_descriptions.values()),
-    normalize_embeddings=True
-)
+def classify_suggestion(
+    suggestion,
+    nlp_model,
+    topic_names,
+    topic_embeddings
+):
 
-#header
+    text = suggestion.lower()
+
+    keyword_scores = {}
+
+    for topic, keywords in topic_keywords.items():
+
+        matches = sum(
+            keyword in text
+            for keyword in keywords
+        )
+
+        keyword_scores[topic] = matches
+
+    max_matches = max(keyword_scores.values())
+
+    best_keyword_topics = [
+        topic
+        for topic, score in keyword_scores.items()
+        if score == max_matches and score > 0
+    ]
+
+    if len(best_keyword_topics) == 1:
+        return (
+            best_keyword_topics[0],
+            None,
+            "Lebanese Arabic keyword match"
+        )
+
+    suggestion_embedding = nlp_model.encode(
+        [suggestion],
+        normalize_embeddings=True
+    )
+
+    similarities = cosine_similarity(
+        suggestion_embedding,
+        topic_embeddings
+    )[0]
+
+    best_index = similarities.argmax()
+
+    detected_topic = topic_names[best_index]
+
+    match_score = float(
+        similarities[best_index]
+    )
+
+    return (
+        detected_topic,
+        match_score,
+        "Semantic similarity"
+    )
+
+
+def find_representative_feedback(
+    topic,
+    suggestions,
+    nlp_model,
+    topic_names,
+    topic_embeddings
+):
+
+    if len(suggestions) == 1:
+        return suggestions[0]
+
+    suggestion_embeddings = nlp_model.encode(
+        suggestions,
+        normalize_embeddings=True
+    )
+
+    topic_index = topic_names.index(topic)
+
+    prototype_embedding = (
+        topic_embeddings[topic_index]
+        .reshape(1, -1)
+    )
+
+    similarities = cosine_similarity(
+        suggestion_embeddings,
+        prototype_embedding
+    ).flatten()
+
+    best_index = similarities.argmax()
+
+    return suggestions[best_index]
+
+
+if "suggestions" not in st.session_state:
+    st.session_state.suggestions = []
+
+if "reports" not in st.session_state:
+    st.session_state.reports = []
+
+if "next_ticket_id" not in st.session_state:
+    st.session_state.next_ticket_id = 1
+
 
 st.title("🧶 Nasij")
-st.subheader("Weaving communities together through AI")
+
+st.subheader(
+    "Weaving communities together through AI"
+)
 
 st.write(
     "Nasij helps citizens report infrastructure issues "
     "and share suggestions with municipalities."
 )
-#initialize 
 
-if "suggestions" not in st.session_state:
-    st.session_state.suggestions = []
-if "suggestions" not in st.session_state:
-    st.session_state.suggestions = []
-if "reports" not in st.session_state:
-    st.session_state.reports = []
-
-#tabs
 
 tab1, tab2, tab3 = st.tabs([
     "📷 Report an Issue",
@@ -81,15 +228,26 @@ tab1, tab2, tab3 = st.tabs([
 ])
 
 
-#tab1 comp vision
-
 with tab1:
 
-    st.header("Report an Infrastructure Issue")
+    st.header("📷 Report an Infrastructure Issue")
 
     st.write(
-        "Upload a photo of a civic issue and Nasij will "
-        "analyze it automatically."
+        "Upload a photo of a civic issue and Nasij "
+        "will analyze it automatically."
+    )
+
+    location = st.text_input(
+        "Location / Area",
+        placeholder="Example: Hamra, Beirut"
+    )
+
+    issue_note = st.text_area(
+        "Additional details (optional)",
+        placeholder=(
+            "Example: This pothole has been causing "
+            "problems for cars for several weeks."
+        )
     )
 
     uploaded_image = st.file_uploader(
@@ -99,22 +257,32 @@ with tab1:
 
     if uploaded_image is not None:
 
-        image = Image.open(uploaded_image).convert("RGB")
+        image = Image.open(
+            uploaded_image
+        ).convert("RGB")
 
-        st.subheader("Uploaded image")
+        st.subheader("Uploaded Image")
 
         st.image(
             image,
             use_container_width=True
         )
 
-        if st.button("🔍 Analyze Issue"):
+        if st.button(
+            "🔍 Analyze Issue",
+            type="primary"
+        ):
 
-            with st.spinner("Nasij is analyzing the image..."):
+            with st.spinner(
+                "Nasij is analyzing the image..."
+            ):
+
+                cv_model = load_cv_model()
 
                 results = cv_model.predict(
                     source=np.array(image),
-                    conf=0.25
+                    conf=0.25,
+                    verbose=False
                 )
 
                 result = results[0]
@@ -130,8 +298,9 @@ with tab1:
 
                 annotated_image = result.plot()
 
-                # YOLO returns BGR, Streamlit expects RGB
-                annotated_image = annotated_image[:, :, ::-1]
+                annotated_image = (
+                    annotated_image[:, :, ::-1]
+                )
 
                 st.subheader("AI Detection")
 
@@ -142,87 +311,221 @@ with tab1:
 
                 st.subheader("Detection Results")
 
+                detections = []
+
                 for box in result.boxes:
 
-                    class_id = int(box.cls[0])
-                    confidence = float(box.conf[0])
-
-                    issue_name = cv_model.names[class_id]
-
-                    st.success(
-                        f"Detected: {issue_name.replace('_', ' ').title()} "
-                        f"— Confidence: {confidence:.1%}"
+                    class_id = int(
+                        box.cls[0]
                     )
-                    st.session_state.reports.append({
-                        "issue": issue_name.replace("_", " ").title(),
+
+                    confidence = float(
+                        box.conf[0]
+                    )
+
+                    issue_name = (
+                        cv_model.names[class_id]
+                    )
+
+                    readable_name = (
+                        issue_name
+                        .replace("_", " ")
+                        .title()
+                    )
+
+                    detections.append({
+                        "issue": readable_name,
                         "confidence": confidence
                     })
 
+                    st.success(
+                        f"Detected: **{readable_name}** "
+                        f"— AI confidence: "
+                        f"**{confidence:.1%}**"
+                    )
 
-#tab2 nlp
+                primary_detection = max(
+                    detections,
+                    key=lambda item: item["confidence"]
+                )
+
+                ticket_id = (
+                    f"NAS-"
+                    f"{st.session_state.next_ticket_id:03d}"
+                )
+
+                st.session_state.next_ticket_id += 1
+
+                report = {
+                    "ticket_id":
+                        ticket_id,
+
+                    "issue":
+                        primary_detection["issue"],
+
+                    "confidence":
+                        primary_detection["confidence"],
+
+                    "location":
+                        location.strip()
+                        if location.strip()
+                        else "Not specified",
+
+                    "note":
+                        issue_note.strip()
+                        if issue_note.strip()
+                        else "No additional details",
+
+                    "status":
+                        "Pending",
+
+                    "time":
+                        datetime.now().strftime(
+                            "%Y-%m-%d %H:%M"
+                        )
+                }
+
+                st.session_state.reports.append(
+                    report
+                )
+
+                st.success(
+                    f"✅ Maintenance ticket "
+                    f"**{ticket_id}** created."
+                )
+
+                st.write(
+                    f"**Issue:** "
+                    f"{report['issue']}"
+                )
+
+                st.write(
+                    f"**Location:** "
+                    f"{report['location']}"
+                )
+
+                st.write(
+                    "**Status:** 🟡 Pending"
+                )
+
 
 with tab2:
 
-    st.header("Submit a Suggestion")
+    st.header("💬 Submit a Suggestion")
 
     st.write(
-        "Share an idea or concern with your municipality."
+        "Share an idea or concern with your municipality. "
+        "Nasij will automatically determine the civic topic."
     )
 
     suggestion = st.text_area(
         "Your suggestion",
-        placeholder="Example: The potholes near our neighborhood need urgent repair."
+        placeholder=(
+            "Example: The potholes near our neighborhood "
+            "need urgent repair."
+        ),
+        height=150
     )
 
-    if st.button("Submit Suggestion", type="primary"):
+    if st.button(
+        "Submit Suggestion",
+        type="primary"
+    ):
 
-        if suggestion.strip():
+        if not suggestion.strip():
 
-            suggestion_embedding = nlp_model.encode(
-                [suggestion],
-                normalize_embeddings=True
+            st.warning(
+                "Please enter a suggestion "
+                "before submitting."
             )
 
-            similarities = cosine_similarity(
-                suggestion_embedding,
-                topic_embeddings
-            )[0]
+        else:
 
-            best_index = similarities.argmax()
+            with st.spinner(
+                "Nasij is analyzing your suggestion..."
+            ):
 
-            detected_topic = topic_names[best_index]
-            confidence = similarities[best_index]
+                (
+                    nlp_model,
+                    topic_names,
+                    topic_embeddings
+                ) = load_nlp_resources()
+
+                (
+                    detected_topic,
+                    match_score,
+                    detection_method
+                ) = classify_suggestion(
+                    suggestion,
+                    nlp_model,
+                    topic_names,
+                    topic_embeddings
+                )
 
             st.session_state.suggestions.append({
-                "suggestion": suggestion,
-                "topic": detected_topic,
-                "confidence": float(confidence)
+                "suggestion":
+                    suggestion.strip(),
+
+                "topic":
+                    detected_topic,
+
+                "match_score":
+                    match_score,
+
+                "method":
+                    detection_method,
+
+                "time":
+                    datetime.now().strftime(
+                        "%Y-%m-%d %H:%M"
+                    )
             })
 
-            st.success("Suggestion submitted successfully! ✅")
+            st.success(
+                "Suggestion submitted successfully! ✅"
+            )
 
-            st.write(f"**Detected topic:** {detected_topic}")
-            st.write(f"**Semantic similarity:** {confidence:.1%}")
+            st.write(
+                f"**Detected topic:** "
+                f"{detected_topic}"
+            )
 
-        else:
-            st.warning("Please enter a suggestion before submitting.")
+            if match_score is not None:
 
+                st.write(
+                    f"**Topic match score:** "
+                    f"{match_score:.1%}"
+                )
 
-#tab3 dashboard
+                st.caption(
+                    "Topic identified using "
+                    "multilingual semantic similarity."
+                )
+
+            else:
+
+                st.write(
+                    "**Detected using Lebanese Arabic "
+                    "civic keywords.**"
+                )
+
 
 with tab3:
 
     st.header("🏛️ Municipality Dashboard")
 
     st.write(
-        "Monitor reported infrastructure issues "
-        "and understand citizens' most common concerns."
+        "Monitor infrastructure reports and understand "
+        "citizens' most common concerns."
     )
 
-  #overview
+    total_reports = len(
+        st.session_state.reports
+    )
 
-    total_suggestions = len(st.session_state.suggestions)
-    total_reports = len(st.session_state.reports)
+    total_suggestions = len(
+        st.session_state.suggestions
+    )
 
     if total_suggestions > 0:
 
@@ -235,27 +538,36 @@ with tab3:
             suggestion_topics
         ).value_counts()
 
-        top_priority = topic_counts.index[0]
+        top_priority = (
+            topic_counts.index[0]
+        )
 
     else:
-        topic_counts = pd.Series(dtype=int)
+
+        topic_counts = pd.Series(
+            dtype=int
+        )
+
         top_priority = "No data yet"
 
     col1, col2, col3 = st.columns(3)
 
     with col1:
+
         st.metric(
             "📷 Infrastructure Reports",
             total_reports
         )
 
     with col2:
+
         st.metric(
             "💬 Citizen Suggestions",
             total_suggestions
         )
 
     with col3:
+
         st.metric(
             "🔥 Top Citizen Concern",
             top_priority
@@ -263,26 +575,26 @@ with tab3:
 
     st.divider()
 
-    #feedback analysis
-
     st.subheader("💬 Citizen Feedback Analysis")
 
     if total_suggestions == 0:
 
         st.info(
-            "No suggestions have been submitted yet."
+            "No citizen suggestions "
+            "have been submitted yet."
         )
 
     else:
 
         st.write("### Most Requested Topics")
 
-        topic_dataframe = topic_counts.reset_index()
-
-        topic_dataframe.columns = [
-            "Topic",
-            "Number of Suggestions"
-        ]
+        topic_dataframe = (
+            topic_counts
+            .rename_axis("Topic")
+            .reset_index(
+                name="Number of Suggestions"
+            )
+        )
 
         st.dataframe(
             topic_dataframe,
@@ -291,59 +603,193 @@ with tab3:
         )
 
         st.bar_chart(
-            topic_dataframe.set_index("Topic")
+            topic_dataframe.set_index(
+                "Topic"
+            )
         )
 
         st.success(
-            f"🔥 Current top priority: **{top_priority}**"
+            f"🔥 Current top priority: "
+            f"**{top_priority}**"
         )
 
-        st.write("### Submitted Suggestions")
+        st.write(
+            "### Municipality Feedback Summary"
+        )
 
-        for item in reversed(st.session_state.suggestions):
+        (
+            nlp_model,
+            topic_names,
+            topic_embeddings
+        ) = load_nlp_resources()
 
-            with st.container(border=True):
+        for topic, count in topic_counts.items():
+
+            topic_suggestions = [
+                item["suggestion"]
+                for item
+                in st.session_state.suggestions
+                if item["topic"] == topic
+            ]
+
+            representative = (
+                find_representative_feedback(
+                    topic,
+                    topic_suggestions,
+                    nlp_model,
+                    topic_names,
+                    topic_embeddings
+                )
+            )
+
+            with st.container(
+                border=True
+            ):
 
                 st.write(
-                    f"**Topic:** {item['topic']}"
+                    f"#### {topic}"
                 )
 
                 st.write(
-                    f"**Suggestion:** {item['suggestion']}"
+                    f"**Citizen submissions:** "
+                    f"{count}"
                 )
 
-                st.caption(
-                    f"Semantic similarity: "
-                    f"{item['confidence']:.1%}"
+                st.write(
+                    f"{count} citizen "
+                    f"{'submission was' if count == 1 else 'submissions were'} "
+                    f"grouped under "
+                    f"**{topic.lower()}**."
                 )
+
+                st.write(
+                    "**Representative concern:**"
+                )
+
+                st.write(
+                    f"> {representative}"
+                )
+
+        st.write(
+            "### Submitted Suggestions"
+        )
+
+        for item in reversed(
+            st.session_state.suggestions
+        ):
+
+            with st.container(
+                border=True
+            ):
+
+                st.write(
+                    f"**Topic:** "
+                    f"{item['topic']}"
+                )
+
+                st.write(
+                    f"**Suggestion:** "
+                    f"{item['suggestion']}"
+                )
+
+                score = item.get(
+                    "match_score"
+                )
+
+                if score is not None:
+
+                    st.caption(
+                        f"Topic match score: "
+                        f"{score:.1%} "
+                        f"• {item['method']} "
+                        f"• Submitted: "
+                        f"{item['time']}"
+                    )
+
+                else:
+
+                    st.caption(
+                        f"{item['method']} "
+                        f"• Submitted: "
+                        f"{item['time']}"
+                    )
 
     st.divider()
 
-    #infrastructure reports
-
-    st.subheader("📷 Infrastructure Reports")
+    st.subheader(
+        "📷 Infrastructure Reports"
+    )
 
     if total_reports == 0:
 
         st.info(
-            "No infrastructure reports have been submitted yet."
+            "No infrastructure reports "
+            "have been submitted yet."
         )
 
     else:
 
-        for report in reversed(st.session_state.reports):
+        for report in reversed(
+            st.session_state.reports
+        ):
 
-            with st.container(border=True):
-
-                st.write(
-                    f"**Issue:** {report['issue']}"
-                )
-
-                st.write(
-                    f"**Confidence:** "
-                    f"{report['confidence']:.1%}"
-                )
+            with st.container(
+                border=True
+            ):
 
                 st.write(
-                    "**Status:** 🟡 Pending"
+                    f"### 🎫 "
+                    f"{report['ticket_id']}"
                 )
+
+                col_a, col_b = (
+                    st.columns(2)
+                )
+
+                with col_a:
+
+                    st.write(
+                        f"**Issue:** "
+                        f"{report['issue']}"
+                    )
+
+                    st.write(
+                        f"**Location:** "
+                        f"{report['location']}"
+                    )
+
+                    st.write(
+                        f"**Citizen note:** "
+                        f"{report['note']}"
+                    )
+
+                with col_b:
+
+                    st.write(
+                        f"**AI confidence:** "
+                        f"{report['confidence']:.1%}"
+                    )
+
+                    st.write(
+                        f"**Submitted:** "
+                        f"{report['time']}"
+                    )
+
+                status_icons = {
+                    "Pending": "🟡",
+                    "In Progress": "🔵",
+                    "Resolved": "🟢"
+                }
+
+                st.write(
+                    f"**Status:** "
+                    f"{status_icons.get(report['status'], '')} "
+                    f"{report['status']}"
+                )
+
+    st.divider()
+
+    st.caption(
+        "Nasij MVP — reports and suggestions are stored "
+        "temporarily during the current application session."
+    )
